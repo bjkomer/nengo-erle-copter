@@ -4,23 +4,60 @@ import time
 
 class Quadcopter(object):
 
-    def __init__(self):
+    def __init__(self, simulation=True, control_style='position'):
+        # Whether to connect to the gazebo simulator or a real quadcopter
+        self.simulation = simulation
+        
         self.position = [0,0,0]
         self.vel = [0,0,0]
 
         self.orientation = [0,0,0,0]
         self.ang_vel = [0,0,0]
         
-        # This is specific to the gazebo erle copter
-        self.connection_string = '127.0.0.1:14550'
+        if self.simulation:
+            # This is specific to the gazebo erle copter
+            self.connection_string = '127.0.0.1:14550'
+        else:
+            # This is specific to the real erle copter
+            self.connection_string = '10.0.0.2:6000'
+        
+        # Determine how the quadcopter will interpret values from Nengo
+        self.control_style = control_style
+        if self.control_style == 'position':
+            self.control_func = self.goto
+        elif self.control_style == 'velocity':
+            self.control_func = self.velocity_command
 
         # Connect to the Vehicle.
         print("Connecting to vehicle on: %s" % (self.connection_string,))
         self.vehicle = connect(self.connection_string, wait_ready=True)
 
-        self.arm_and_takeoff(5)
+        #self.arm_and_takeoff(5)
+        self.arm(mode='GUIDED')
 
         self.step = 0
+
+    
+    def arm(self, mode='GUIDED'):
+        """
+        Arms vehicle
+        """
+
+        print("Basic pre-arm checks")
+        # Don't try to arm until autopilot is ready
+        while not self.vehicle.is_armable:
+            print(" Waiting for vehicle to initialise...")
+            time.sleep(1)
+        
+        print("Arming motors")
+        # Copter should arm in GUIDED mode
+        self.vehicle.mode = VehicleMode(mode)
+        self.vehicle.armed = True
+
+        # Confirm vehicle armed before attempting to take off
+        while not self.vehicle.armed:
+            print(" Waiting for arming...")
+            time.sleep(1)
     
     def arm_and_takeoff(self, aTargetAltitude):
         """
@@ -73,6 +110,22 @@ class Quadcopter(object):
             0, 0)    # yaw, yaw_rate (not supported yet, ignored in GCS_Mavlink)
         # send command to vehicle
         self.vehicle.send_mavlink(msg)
+    
+    def velocity_command(self, velocity_x, velocity_y, velocity_z):
+        """
+        Move vehicle in direction based on specified velocity vectors.
+        """
+        msg = self.vehicle.message_factory.set_position_target_local_ned_encode(
+            0,       # time_boot_ms (not used)
+            0, 0,    # target system, target component
+            mavutil.mavlink.MAV_FRAME_LOCAL_NED, # frame
+            0b0000111111000111, # type_mask (only speeds enabled)
+            0, 0, 0, # x, y, z positions (not used)
+            velocity_x, velocity_y, velocity_z, # x, y, z velocity in m/s
+            0, 0, 0, # x, y, z acceleration (not supported yet, ignored in GCS_Mavlink)
+            0, 0)    # yaw, yaw_rate (not supported yet, ignored in GCS_Mavlink)
+
+        self.vehicle.send_mavlink(msg)
 
     # TODO: figure out why this does not work
     def goto_yaw(self, heading, relative=False):
@@ -106,19 +159,10 @@ class Quadcopter(object):
         # send command to vehicle
         self.vehicle.send_mavlink(msg)
 
-    def odo_callback(self, data):
-
-        self.position[0] = data.pose.pose.position.x
-        self.position[1] = data.pose.pose.position.y
-        self.position[2] = data.pose.pose.position.z
-        self.vel = data.twist.twist.linear
-
-        self.orientation = data.pose.pose.orientation
-        self.ang_vel = data.twist.twist.angular
-
     def __call__(self, t, x):
         if self.step >= 100:
-            self.goto(x[0], x[1], x[2])
+            #self.goto(x[0], x[1], x[2])
+            self.control_func(x[0], x[1], x[2])
             if len(x) > 3:
                 self.goto_yaw(x[3])
             self.step = 0
