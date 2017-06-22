@@ -1,5 +1,5 @@
 import rospy
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, TwistStamped
 from nav_msgs.msg import Odometry
 import numpy as np
 
@@ -23,7 +23,9 @@ def yaw_to_quaternion(yaw):
 
 class Quadcopter(object):
 
-    def __init__(self, disable_signals=False):
+    def __init__(self, disable_signals=False, control_style='position'):
+        self.control_style = control_style
+        
         self.position = [0,0,0]
         self.vel = [0,0,0]
 
@@ -33,12 +35,20 @@ class Quadcopter(object):
         rospy.init_node('quadcopter', anonymous=True,
                         disable_signals=disable_signals)
 
-        self.waypoint_msg = PoseStamped()
+        if self.control_style == 'position':
+            self.waypoint_msg = PoseStamped()
 
-        self.pub_waypoint = rospy.Publisher('/mavros/setpoint_position/local',
-                                            PoseStamped,
-                                            queue_size=10
-                                           )
+            self.pub_waypoint = rospy.Publisher('/mavros/setpoint_position/local',
+                                                PoseStamped,
+                                                queue_size=10
+                                               )
+        elif self.control_style == 'velocity':
+            self.velocity_msg = TwistStamped()
+
+            self.pub_velocity = rospy.Publisher('/mavros/setpoint_velocity/cmd_vel',
+                                                TwistStamped,
+                                                queue_size=10
+                                               )
 
         self.sub_odometry = rospy.Subscriber('/mavros/local_position/odom',
                                              Odometry,
@@ -59,15 +69,24 @@ class Quadcopter(object):
 
     def __call__(self, t, x):
         if self.step >= 100:
-            self.waypoint_msg.pose.position.x = x[0]
-            self.waypoint_msg.pose.position.y = x[1]
-            self.waypoint_msg.pose.position.z = x[2]
-            if len(x) > 3:
-                # Set the yaw using quaternions
-                self.waypoint_msg.pose.orientation.x = np.cos(x[3]/2.)
-                self.waypoint_msg.pose.orientation.w = np.sin(x[3]/2.)
+            if self.control_style == 'position':
+                self.waypoint_msg.pose.position.x = x[0]
+                self.waypoint_msg.pose.position.y = x[1]
+                self.waypoint_msg.pose.position.z = x[2]
+                if len(x) > 3:
+                    # Set the yaw using quaternions
+                    self.waypoint_msg.pose.orientation.x = np.cos(x[3]/2.)
+                    self.waypoint_msg.pose.orientation.w = np.sin(x[3]/2.)
 
-            self.pub_waypoint.publish(self.waypoint_msg)
+                self.pub_waypoint.publish(self.waypoint_msg)
+            elif self.control_style == 'velocity':
+                self.velocity_msg.twist.linear.x = x[0]
+                self.velocity_msg.twist.linear.y = x[1]
+                self.velocity_msg.twist.linear.z = x[2]
+                if len(x) > 3:
+                    self.velocity_msg.twist.angular.z = x[3]
+
+                self.pub_velocity.publish(self.velocity_msg)
             self.step = 0
         self.step += 1
 
