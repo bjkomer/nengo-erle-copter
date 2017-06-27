@@ -124,6 +124,16 @@ class Quadcopter(object):
         self.orientation = data.pose.pose.orientation
         self.ang_vel = data.twist.twist.angular
 
+    def disarm(self):
+        """ 
+        Make sure the quadcopter gets disarmed. Might be other things that
+        need to happen here in the future in case calling the service fails
+        """
+        
+        self.arm_service(False)
+        
+
+
     def __call__(self, t, x):
         if self.step >= 100:
             if self.control_style == 'position':
@@ -152,6 +162,12 @@ class Quadcopter(object):
                 self.rc_msg.channels[2] = max(1000,min(x[2]*500+1500,2000))
 
                 self.pub_rc.publish(self.rc_msg)
+
+            # Put the kill switch as the 5th element for now
+            if len(x) > 4:
+                if x[4] > .2:
+                    self.disarm()
+
             self.step = 0
         self.step += 1
 
